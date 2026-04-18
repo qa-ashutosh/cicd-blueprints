@@ -1,3 +1,11 @@
+## What's Changed in v1.0.0
+
+### ✨ Features
+- feat: initial cicd-blueprints (3014fd4)
+
+---
+_Full diff: [v1.0.0](https://github.com/qa-ashutosh/cicd-blueprints/compare/...v1.0.0)_
+
 # Changelog
 
 All notable changes to this project are documented here.
