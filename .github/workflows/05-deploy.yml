@@ -53,7 +53,7 @@ jobs:
     if: github.event.inputs.deploy_target == 'docker-compose'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -91,7 +91,7 @@ jobs:
     if: github.event.inputs.deploy_target == 'aws-ecs'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # ── PLUG IN: add your AWS credentials to GitHub Secrets ──────────────
       # Required secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
@@ -143,7 +143,7 @@ jobs:
     if: github.event.inputs.deploy_target == 'gcp-cloudrun'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # ── PLUG IN: add GCP_SA_KEY (service account JSON) to GitHub Secrets ──
       # Required vars: GCP_PROJECT_ID, GCP_REGION, CLOUDRUN_SERVICE
