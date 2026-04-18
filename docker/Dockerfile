@@ -1,11 +1,11 @@
 # ── Stage 1: deps ────────────────────────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:25-alpine AS deps
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
 # ── Stage 2: test (used in CI, not shipped) ──────────────────────────────────
-FROM node:20-alpine AS test
+FROM node:25-alpine AS test
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
@@ -13,7 +13,7 @@ COPY . .
 RUN npm run lint && npm test
 
 # ── Stage 3: production image ─────────────────────────────────────────────────
-FROM node:20-alpine AS production
+FROM node:25-alpine AS production
 WORKDIR /app
 
 # Non-root user for security
