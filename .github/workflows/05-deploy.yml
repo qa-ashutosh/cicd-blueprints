@@ -1,0 +1,165 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# 05 · Deploy — Docker Compose (default) | pluggable AWS / GCP stubs
+# Trigger : workflow_dispatch (manual) — choose environment & image tag
+# Purpose : deploy any GHCR image tag to any target with zero config changes
+#
+# How to deploy:
+#   GitHub → Actions → "05 · Deploy" → Run workflow → pick env & tag
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: 05 · Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      image_tag:
+        description: Docker image tag to deploy (e.g. sha-a1b2c3d or latest)
+        required: true
+        default: latest
+      deploy_target:
+        description: Deploy strategy
+        required: true
+        default: docker-compose
+        type: choice
+        options: [docker-compose, aws-ecs, gcp-cloudrun]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ── Guard: confirm production deploys ────────────────────────────────────
+  deploy-gate:
+    name: 🔒 Deploy Gate
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}   # uses GitHub Environments protection rules
+    steps:
+      - name: Log deploy intent
+        run: |
+          echo "🚀 Deploying **${{ github.event.inputs.image_tag }}** to **${{ github.event.inputs.environment }}**"
+          echo "Strategy: ${{ github.event.inputs.deploy_target }}"
+
+  # ── Docker Compose deploy (default, works everywhere) ────────────────────
+  deploy-docker-compose:
+    name: 🐳 Deploy via Docker Compose
+    runs-on: ubuntu-latest
+    needs: deploy-gate
+    if: github.event.inputs.deploy_target == 'docker-compose'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image
+        run: |
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}
+
+      - name: Deploy with Docker Compose
+        run: |
+          export IMAGE_TAG=${{ github.event.inputs.image_tag }}
+          export NODE_ENV=${{ github.event.inputs.environment }}
+          # Replace local build with pulled image in compose
+          sed "s|image: cicd-blueprints-api:local|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}|" \
+            docker/docker-compose.yml > docker/docker-compose.deploy.yml
+          docker compose -f docker/docker-compose.deploy.yml up -d
+          echo "✅ Container started"
+          docker compose -f docker/docker-compose.deploy.yml ps
+
+      - name: Health check post-deploy
+        run: |
+          sleep 5
+          curl -f http://localhost:3000/health || (echo "❌ Health check failed" && exit 1)
+          echo "✅ Health check passed"
+
+  # ── AWS ECS stub — plug in your cluster details ───────────────────────────
+  deploy-aws-ecs:
+    name: ☁️ Deploy to AWS ECS
+    runs-on: ubuntu-latest
+    needs: deploy-gate
+    if: github.event.inputs.deploy_target == 'aws-ecs'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── PLUG IN: add your AWS credentials to GitHub Secrets ──────────────
+      # Required secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+      # Required vars:    AWS_REGION, ECS_CLUSTER, ECS_SERVICE, CONTAINER_NAME
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Update ECS service with new image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}"
+          CLUSTER="${{ vars.ECS_CLUSTER }}"
+          SERVICE="${{ vars.ECS_SERVICE }}"
+
+          # Get current task definition
+          TASK_DEF=$(aws ecs describe-task-definition --task-definition $SERVICE --query taskDefinition)
+
+          # Update image in task definition
+          NEW_TASK_DEF=$(echo $TASK_DEF | \
+            python3 -c "
+          import json,sys
+          td=json.load(sys.stdin)
+          for c in td['containerDefinitions']:
+              if c['name']=='${{ vars.CONTAINER_NAME }}':
+                  c['image']='$IMAGE'
+          keys=['family','containerDefinitions','volumes','placementConstraints','requiresCompatibilities','cpu','memory','networkMode','executionRoleArn','taskRoleArn']
+          print(json.dumps({k:td[k] for k in keys if k in td}))
+          ")
+
+          # Register new task definition revision
+          NEW_REV=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+
+          # Update service
+          aws ecs update-service --cluster $CLUSTER --service $SERVICE \
+            --task-definition $NEW_REV --force-new-deployment
+
+          echo "✅ ECS service updated: $NEW_REV"
+
+  # ── GCP Cloud Run stub — plug in your project details ────────────────────
+  deploy-gcp-cloudrun:
+    name: ☁️ Deploy to GCP Cloud Run
+    runs-on: ubuntu-latest
+    needs: deploy-gate
+    if: github.event.inputs.deploy_target == 'gcp-cloudrun'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── PLUG IN: add GCP_SA_KEY (service account JSON) to GitHub Secrets ──
+      # Required vars: GCP_PROJECT_ID, GCP_REGION, CLOUDRUN_SERVICE
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service:  ${{ vars.CLOUDRUN_SERVICE }}
+          region:   ${{ vars.GCP_REGION || 'us-central1' }}
+          image:    ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}
+          env_vars: NODE_ENV=${{ github.event.inputs.environment }}
+
+      - name: Show Cloud Run URL
+        run: echo "✅ Deployed to $(gcloud run services describe ${{ vars.CLOUDRUN_SERVICE }} --region=${{ vars.GCP_REGION }} --format='value(status.url)')"

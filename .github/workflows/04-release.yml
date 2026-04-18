@@ -1,0 +1,118 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# 04 · Release — Semantic versioning + auto CHANGELOG + GitHub Release
+# Trigger : push of a version tag  (e.g. git tag v1.2.0 && git push --tags)
+# Purpose : create a GitHub Release with auto-generated release notes
+#
+# ✅ NO branch protection bypass needed — tag-push skips PR rules entirely.
+#    Works 100% on free personal public repos.
+#
+# How to release:
+#   git tag v1.2.0 -m "Release v1.2.0"
+#   git push origin v1.2.0
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: 04 · Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'      # matches v1.0.0, v2.3.1, etc.
+
+jobs:
+  release:
+    name: 🚀 Create GitHub Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # required to create releases & update CHANGELOG
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # full history needed to generate changelog
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install app deps & run tests before releasing
+        working-directory: app
+        run: |
+          npm ci
+          npm test
+        env:
+          NODE_ENV: test
+
+      - name: Generate release notes from commits
+        id: notes
+        run: |
+          # Get previous tag (if any)
+          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p')
+
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="HEAD"
+            echo "First release — including all commits"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+            echo "Changes since $PREV_TAG"
+          fi
+
+          # Categorise commits by conventional commit prefix
+          FEATURES=$(git log $RANGE --pretty=format:"- %s (%h)" | grep -E "^- feat" || true)
+          FIXES=$(git log $RANGE --pretty=format:"- %s (%h)" | grep -E "^- fix" || true)
+          CHORES=$(git log $RANGE --pretty=format:"- %s (%h)" | grep -E "^- (chore|ci|docs|refactor|test)" || true)
+          OTHERS=$(git log $RANGE --pretty=format:"- %s (%h)" | grep -vE "^- (feat|fix|chore|ci|docs|refactor|test)" || true)
+
+          # Build notes file
+          {
+            echo "## What's Changed in ${{ steps.version.outputs.VERSION }}"
+            echo ""
+            [ -n "$FEATURES" ] && echo "### ✨ Features" && echo "$FEATURES" && echo ""
+            [ -n "$FIXES"    ] && echo "### 🐛 Bug Fixes" && echo "$FIXES" && echo ""
+            [ -n "$CHORES"   ] && echo "### 🔧 Maintenance" && echo "$CHORES" && echo ""
+            [ -n "$OTHERS"   ] && echo "### 📦 Other Changes" && echo "$OTHERS" && echo ""
+            echo "---"
+            echo "_Full diff: [${{ steps.version.outputs.VERSION }}](https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${{ steps.version.outputs.VERSION }})_"
+          } > release-notes.md
+
+          cat release-notes.md
+
+      - name: Update CHANGELOG.md
+        run: |
+          TEMP=$(mktemp)
+          # Prepend new release notes to existing CHANGELOG
+          cat release-notes.md > $TEMP
+          echo "" >> $TEMP
+          [ -f CHANGELOG.md ] && cat CHANGELOG.md >> $TEMP || true
+          mv $TEMP CHANGELOG.md
+
+      - name: Commit updated CHANGELOG back to main
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "docs: update CHANGELOG for ${{ steps.version.outputs.VERSION }} [skip ci]" || echo "No changes to commit"
+          git push origin HEAD:main || echo "Push skipped (nothing to push)"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: Release ${{ steps.version.outputs.VERSION }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
+          generate_release_notes: false   # we generate our own above
+
+      - name: Release summary
+        run: |
+          echo "### 🎉 Released ${{ steps.version.outputs.VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat release-notes.md >> $GITHUB_STEP_SUMMARY

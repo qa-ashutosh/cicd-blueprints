@@ -1,0 +1,26 @@
+version: '3.9'
+
+services:
+  api:
+    build:
+      context: ../app
+      dockerfile: ../docker/Dockerfile
+      target: production
+    image: cicd-blueprints-api:local
+    container_name: cicd-api
+    ports:
+      - '${PORT:-3000}:3000'
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3000
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Optional: swap api image for GHCR image in deploy mode
+  # api:
+  #   image: ghcr.io/YOUR_USERNAME/cicd-blueprints:latest

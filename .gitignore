@@ -1,0 +1,16 @@
+node_modules/
+coverage/
+.env
+dist/
+*.log
+.DS_Store
+docker/docker-compose.deploy.yml
+npm-audit-report.json
+trivy-results.sarif
+release-notes.md
+app/build/
+app/node_modules/
+app/dist/
+app/coverage/
+app/.env
+dist/

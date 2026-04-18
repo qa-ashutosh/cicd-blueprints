@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Documentation
+    url: https://github.com/YOUR_USERNAME/cicd-blueprints/tree/main/docs
+    about: Read the full docs before opening an issue
+  - name: 🔧 Troubleshooting guide
+    url: https://github.com/YOUR_USERNAME/cicd-blueprints/blob/main/docs/TROUBLESHOOTING.md
+    about: Common issues and fixes
